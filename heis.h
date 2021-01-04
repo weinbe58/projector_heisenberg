@@ -1,6 +1,7 @@
 #ifndef _heis_h_
 #define _heis_h_
 
+#include <cassert>
 #include <iostream>
 #include <iomanip>
 #include <algorithm>
@@ -26,7 +27,7 @@ class proj_heis
   int *Vl,*Vr;
   const int * bond_list;
   const double * J_list, * h;
-  const int N,Nb,M;
+  const int N,Nb,M,H;
 
   	// select_bond : random number generator that generates integers based on weights.
     // ran : random number between 0 and 1;
@@ -60,7 +61,7 @@ public:
 
 	proj_heis(const int N_,const int Nb_,const int M_,
 		const double * J_list_,const int * bond_list_,const double * h_) : 
-	N(N_), Nb(Nb_), M(M_), J_list(J_list_), bond_list(bond_list_), h(h_) {this->init();}
+	N(N_), Nb(Nb_), M(M_), H(8*M_), J_list(J_list_), bond_list(bond_list_), h(h_) {this->init();}
 	~proj_heis(){}
 
 
@@ -77,6 +78,11 @@ public:
 
 void proj_heis::init() {
 
+	assert(N%2==0);
+
+	for(int b=0;b<2*Nb;b++){assert(bond_list[b] < N);}
+
+
 	std::vector<double> J_abs(Nb);
 
 	for(int i=0;i<Nb;i++){J_abs[i] = std::abs(J_list[i]);}
@@ -92,7 +98,7 @@ void proj_heis::init() {
 	r_spins.resize(N);
 	first.insert(first.end(),N,-1);
 	last.insert(last.end(),N,-1);
-	X.resize(8*M+4*N);
+	X.resize(H+4*N);
 	opstr.resize(2*M);
 
 	Vl = &end_caps[0];
@@ -234,7 +240,7 @@ void proj_heis::MCsweep(callback &cb){
 
 
 void proj_heis::MCsweep(){
-	auto cb = [](int p,const int M,signed char * s) {return;};
+	auto cb = [](int p,signed char * s) {};
 	this->diag_update(cb);
 	this->loop_update();
 	this->ends_update();
@@ -245,7 +251,7 @@ void proj_heis::diag_update(callback &cb) {
 	std::copy(r_spins.begin(),r_spins.end(),spins.begin());
 
 	for(int p=0;p<2*M;p++){
-		cb(p,M,&spins[0]);
+		cb(p,&spins[0]);
 
 		if(opstr[p]%2){
 			const int ib = opstr[p]/2;
@@ -260,7 +266,7 @@ void proj_heis::diag_update(callback &cb) {
 				const int J_sign = (J_list[ib] > 0 ? 1 : -1);
 				const int i = bond_list[2*ib];
 				const int j = bond_list[2*ib+1];
-				if(spins[i] * spins[j] * J_sign < 0){
+				if(spins[i] * spins[j] != J_sign){
 					opstr[p] = 2*ib; 
 					break;
 				}
@@ -268,8 +274,8 @@ void proj_heis::diag_update(callback &cb) {
 		}
 	}
 
-
-	cb(2*M-1,M,&spins[0]);
+	for(int i=0;i<N;i++){assert((spins[i]==l_spins[i]));}
+	cb(2*M-1,&spins[0]);
 }
 
 
@@ -285,7 +291,6 @@ void proj_heis::linked_list(){
 		const int v0 = 4*p;
 		const int i1 = bond_list[2*ib];
 		const int i2 = bond_list[2*ib+1];
-
 		const int v1 = last[i1];
 		const int v2 = last[i2];
 
@@ -299,40 +304,29 @@ void proj_heis::linked_list(){
 		last[i2] = v0+3;
 	}
 
-	std::vector<const int*> edge_X, V;
-	
-	edge_X.push_back(&first[0]);
-	edge_X.push_back(&last[0]);
-	V.push_back(&Vr[0]);
-	V.push_back(&Vl[0]);
-
-	// finish off by linking verticies using end-caps
-	for(int edge0=0;edge0<2;edge0++){
-		for(int i0=0;i0<N;i0++){
-
-			int i = i0;
-			int edge = edge0;
-
-			// if site connects to operator strings
-			if(edge_X[edge][i] != -1){
-				while(true){ // follow loops created by vbs end-caps 
-					i = V[edge][i]; // shift to connected end-cap site
-					if(edge_X[edge][i] == -1){// if site not connect to linked list, move to other end-cap
-						edge ^= 1;
-					} 
-					else{ // if site is connected to linked list, stop and update link list to connect the ends
-						const int v0 = edge_X[edge0][i0];
-						const int v1 = edge_X[edge][i];
-						X[v0] = v1; X[v1] = v0; break;
-					}
-					// if the loop closes without encountering linked list, stop loop.
-					if(edge == edge0 && i == i0){break;}
-				}
-			}
+	for(int i=0;i<N;i++){
+		const int q0 = H+2*i;
+		const int q1 = H+2*(N+i);
+		if(first[i] == -1 && last[i] == -1){
+			X[q0] = q1;	X[q1] = q0;
+		}
+		else{
+			X[first[i]] = q0; X[q0] = first[i];
+			X[last[i]] = q1; X[q1] = last[i];
 		}
 	}
-}
 
+	for(int i=0;i<N;i++){
+		const int q0 = H+2*i+1;
+		const int q1 = H+2*Vr[i]+1;
+		const int q2 = H+2*(N+i)+1;
+		const int q3 = H+2*(N+Vl[i])+1;
+
+		X[q0] = q1; X[q1] = q0;
+		X[q2] = q3; X[q3] = q2;
+	}
+
+}
 
 
 void proj_heis::loop_update(){
@@ -341,131 +335,99 @@ void proj_heis::loop_update(){
 	std::fill(clusters.begin(),clusters.end(),-1);
 	int cluster = 0;
 
-	for(int v0=0;v0<8*M;v0+=2){
+	for(int v0=0;v0<X.size();v0+=2){
 
 		if(X[v0]<0){continue;}
-		int cutoff=0;
 		int v = v0;
-		int p = v0/4;
-
+		bool found_mid = false;
 		if(ran()<0.5){ // visit loop
 
 			while(true){
 				X[v] = -1;
-				const int ib = opstr[p] / 2;
-				
-				if(J_list[ib] < 0){v = (v^2)^1;} // ferromagnetic: 0 <-> 3, 1 <-> 2
-				else{v ^= 1;} // antiferromagnetic: 0 <-> 1, 2 <-> 3
+				int p,p1,site;
+				if(v < H){
+					p = v/4;
+					const int ib = opstr[p] / 2;
+					
+					if(J_list[ib] < 0){v = (v^2)^1;} // ferromagnetic: 0 <-> 3, 1 <-> 2
+					else{v ^= 1;} // antiferromagnetic: 0 <-> 1, 2 <-> 3
 
-
-				const int v1 = X[v];
-				const int p1 = v1 / 4;
-
-				if((p >= M && p1 < M) || (p < M && p1 >= M)){
-					const size_t ind = 2*ib+v%2;
-					clusters[bond_list[ind]] = cluster;
+					site = bond_list[2*ib+v%2];
+				}
+				else{
+					v ^= 1;
+					const int q = v-H;
+					p = (q < 2*N ? -1 : 2*M);
+					site = (q/2)%N;
 				}
 
+				const int v1 = X[v];
+				if(v1 < H){
+					p1 = v1/4;
+				}
+				else{
+					p1 = ((v1-H) < 2*N ? -1 : 2*M);
+				}
 
-				X[v] = -1; v = v1; p = p1;
-				
+				if((p < M && p1 >= M ) || (p1 < M && p >= M)){
+					clusters[site] = cluster;
+					found_mid = true;
+				}
+				X[v] = -1; v = v1;
 				if(v==v0) break;
 			}
 		}
 		else{ // flip loop
 			while(true){
 				X[v] = -2;
-				opstr[p] ^= 1; // diagonal <-> diagonal operators
+				int p,p1,site;
+				if(v < H){
+					p = v/4;
+					opstr[p] ^= 1;
+					const int ib = opstr[p] / 2;
+					
+					if(J_list[ib] < 0){v = (v^2)^1;} // ferromagnetic: 0 <-> 3, 1 <-> 2
+					else{v ^= 1;} // antiferromagnetic: 0 <-> 1, 2 <-> 3
 
-				const int ib = opstr[p] / 2;
-				if(J_list[ib] < 0){v = (v^2)^1;} // ferromagnetic: 0 <-> 3, 1 <-> 2
-				else{v ^= 1;} // antiferromagnetic: 0 <-> 1, 2 <-> 3
-
-				const int v1 = X[v];
-				const int p1 = v1 / 4;
-
-				if((p >= M && p1 < M) || (p < M && p1 >= M)){
-					const size_t ind = 2*ib+v%2;
-					clusters[bond_list[ind]] = cluster;
+					site = bond_list[2*ib+v%2];
+				}
+				else{
+					v ^= 1;
+					const int q = v-H;
+					p = (q < 2*N ? -1 : 2*M);
+					site = (q/2)%N;
 				}
 
+				const int v1 = X[v];
+				if(v1 < H){
+					p1 = v1/4;
+				}
+				else{
+					p1 = ((v1-H) < 2*N ? -1 : 2*M);
+				}
 
-				X[v] = -2; v = v1; p = p1;
+				if((p < M && p1 >= M ) || (p1 < M && p >= M)){
+					clusters[site] = cluster;
+					found_mid = true;
+				}
+				X[v] = -2; v = v1;
 				if(v==v0) break;
 			}
 		}
 
-		cluster++;
+		if(found_mid) cluster++;
+
 	}
 
-	std::vector<int*> edge_X, V;
-	std::vector<signed char*> edge_spins;
-	
-	edge_X.push_back(&first[0]);
-	edge_X.push_back(&last[0]);
-	V.push_back(&Vr[0]);
-	V.push_back(&Vl[0]);
-	edge_spins.push_back(&r_spins[0]);
-	edge_spins.push_back(&l_spins[0]);
 
-	for(int edge0=0;edge0<2;edge0++){
-		for(int i0=0;i0<N;i0++){
 
-			int i = i0;
-			int edge = edge0;
+	for(int i=0;i<N;i++){
+		const int q0 = H+2*i;
+		const int q1 = H+2*(N+i);
 
-			// if site connects to operator strings
-			if(edge_X[edge][i] >= 0){
-				if(X[edge_X[edge][i]] == -2){
-					edge_spins[edge][i] *= -1;
+		if(X[q0] == -2){r_spins[i] *= -1;}
+		if(X[q1] == -2){l_spins[i] *= -1;}
 
-					while(true){ // follow loops created by vbs end-caps
-						i = V[edge][i]; // shift to connected end-cap site
-						edge_spins[edge][i] *= -1;
-
-						if(edge_X[edge][i] == -1){edge_X[edge][i] = -3; edge ^= 1;} 
-						else{edge_X[edge][i] = -3; break;}
-					}
-				}
-			}
-		}
-	}
-
-	for(int edge0=0;edge0<2;edge0++){
-		for(int i0=0;i0<N;i0++){
-
-			int i = i0;
-			int edge = edge0;
-
-			// if site not visited and is not connected to linked list
-			// this is the beginning of a closed loop over vbs state
-			if(edge_X[edge][i] == -1){ 
-
-				if(ran() < 0.5){ // 
-					// clusters[i] = cluster;
-
-					while(true){ // follow loops created by vbs end-caps
-						i = V[edge][i]; // shift to connected end-cap site
-
-						if(edge_X[edge][i] == -1){edge_X[edge][i] = -3; edge ^= 1;} 
-						else{edge_X[edge][i] = -3; break;}
-					}
-				}
-				else{
-					edge_spins[edge][i] *= -1;
-
-					while(true){ // follow loops created by vbs end-caps
-						i = V[edge][i]; // shift to connected end-cap site
-						edge_spins[edge][i] *= -1;
-
-						if(edge_X[edge][i] == -1){edge_X[edge][i] = -3; edge ^= 1;} 
-						else{edge_X[edge][i] = -3; break;}
-					}
-				
-				}
-				cluster++;
-			}
-		}
 	}
 
 
@@ -476,12 +438,13 @@ void proj_heis::loop_update(){
 
 void proj_heis::ends_update(){
 	//right side
-	for(int attempt=0;attempt<N;attempt++){
+	int count = 0;
+	while(2*count < N){
 
 		const int j0 = std::floor(N*ran());
 		const int i0 = Vr[j0];
 		const int j = (*select_h[i0])();
-		if(r_spins[i0] == r_spins[j] && j==j0) continue;
+		if(r_spins[i0] == r_spins[j] || j==j0) continue;
 
 		const int i = Vr[j];
 		const int j1 = (*select_h[i])();
@@ -493,17 +456,18 @@ void proj_heis::ends_update(){
 		Vr[j0] = i;
 		Vr[i]  = j0;
 
-
+		count++;
 
 	}
 
+	count = 0;
 	// left side
-	for(int attempt=0;attempt<N;attempt++){
+	while(2*count < N){
 
 		const int j0 = std::floor(N*ran());
 		const int i0 = Vl[j0];
 		const int j = (*select_h[i0])();
-		if(l_spins[i0] == l_spins[j] && j==j0) continue;
+		if(l_spins[i0] == l_spins[j] || j==j0) continue;
 
 		const int i = Vl[j];
 		const int j1 = (*select_h[i])();
@@ -513,7 +477,7 @@ void proj_heis::ends_update(){
 		Vl[j]  = i0;
 		Vl[j0] = i;
 		Vl[i]  = j0;
-
+		count++;
 	}
 
 
